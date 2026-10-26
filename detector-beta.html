@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GDF · Detector IA Beta</title>
+<style>body{margin:0;background:#081625;color:#e9f2ff;font:16px system-ui}header,main{padding:16px;max-width:960px;margin:auto}h1{font-size:23px;color:#eacb7d}button,input{font:inherit;margin:6px 5px 6px 0}button{background:#b58c3b;color:#081625;border:0;border-radius:8px;padding:12px}button:disabled{opacity:.45}.stage{position:relative;width:100%;background:#000}video{display:block;width:100%;height:auto;max-height:70vh}canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}small{color:#bed0e2}.card{background:#112b44;border-radius:12px;padding:14px;margin:12px 0}a{color:#eacb7d}</style>
+</head><body><header><h1>GUERREROS DE FE · DETECTOR IA BETA</h1><small>Prueba experimental en el navegador · No modifica el sistema principal</small></header>
+<main><div class="card"><label>Selecciona un video de fútbol: <input id="file" type="file" accept="video/*"></label><p><button id="start" disabled>Iniciar detección</button><button id="stop" disabled>Detener IA</button></p><p id="status" role="status">Selecciona un video para comenzar.</p><p id="counts">Jugadores/personas: — · Balones: —</p></div>
+<div class="stage"><video id="video" controls playsinline preload="metadata"></video><canvas id="overlay"></canvas></div>
+<p><small>Modelo COCO-SSD: reconoce personas y pelotas deportivas; no distingue equipos ni garantiza identificar el balón en todas las tomas. Requiere internet para cargar el modelo. Los videos permanecen en este dispositivo durante la prueba. En iPhone, videos largos o de alta resolución pueden funcionar lentamente.</small></p><p><a href="./">Volver al sistema principal</a></p></main>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<script>
+const file=document.querySelector('#file'),video=document.querySelector('#video'),canvas=document.querySelector('#overlay'),ctx=canvas.getContext('2d'),status=document.querySelector('#status'),counts=document.querySelector('#counts'),start=document.querySelector('#start'),stop=document.querySelector('#stop');
+let model=null,running=false,objectURL=null,token=0;
+function say(s){status.textContent=s}
+function clear(){ctx.clearRect(0,0,canvas.width,canvas.height)}
+function size(){canvas.width=video.videoWidth||640;canvas.height=video.videoHeight||360;clear()}
+function halt(){running=false;token++;stop.disabled=true;start.disabled=!video.src;clear()}
+file.onchange=()=>{halt();if(objectURL)URL.revokeObjectURL(objectURL);const f=file.files[0];if(!f)return;objectURL=URL.createObjectURL(f);video.src=objectURL;video.load();say('Video seleccionado. Pulsa Iniciar detección.');counts.textContent='Jugadores/personas: — · Balones: —'};
+video.onloadedmetadata=size;video.onended=()=>{halt();say('Video finalizado.');};
+stop.onclick=()=>{halt();say('Detección detenida.');};
+start.onclick=async()=>{if(!video.videoWidth){say('Espera a que el video esté listo.');return}if(!window.cocoSsd||!window.tf){say('No se cargó la biblioteca IA. Revisa tu conexión.');return}
+start.disabled=true;stop.disabled=false;running=true;const mine=++token;
+try{say('Cargando modelo de inteligencia artificial…');if(!model)model=await cocoSsd.load({base:'lite_mobilenet_v2'});if(!running||mine!==token)return;say('Modelo listo. Reproduciendo y detectando…');await video.play();let last=0;
+async function loop(t){if(!running||mine!==token)return;if(video.paused||video.ended){requestAnimationFrame(loop);return}if(t-last<300){requestAnimationFrame(loop);return}last=t;
+try{const predictions=await model.detect(video,20,0.25);if(!running||mine!==token)return;size();let people=0,balls=0;for(const p of predictions){if(p.class!=='person'&&p.class!=='sports ball')continue;if(p.class==='person')people++;else balls++;const [x,y,w,h]=p.bbox;ctx.strokeStyle=p.class==='person'?'#45e4a8':'#ffd24d';ctx.lineWidth=Math.max(3,canvas.width/320);ctx.strokeRect(x,y,w,h);ctx.font=Math.max(15,canvas.width/55)+'px system-ui';ctx.fillStyle=ctx.strokeStyle;ctx.fillText((p.class==='person'?'Persona':'Balón')+' '+Math.round(p.score*100)+'%',x,Math.max(20,y-6))}counts.textContent='Jugadores/personas detectadas: '+people+' · Posibles balones: '+balls;say('Detección activa · resultados aproximados');}catch(e){say('Error al analizar un fotograma: '+e.message);halt();return}requestAnimationFrame(loop)}
+requestAnimationFrame(loop)}catch(e){halt();say('No se pudo iniciar IA: '+e.message+'. Prueba con Wi-Fi y un video corto.')}};
+</script></body></html>
