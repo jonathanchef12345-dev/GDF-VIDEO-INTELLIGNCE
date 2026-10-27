@@ -1,0 +1,54 @@
+<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GDF Video Intelligence · Detección Beta V6</title><style>
+.gdf-stage{position:relative;width:100%;background:#000}.gdf-stage video{display:block;width:100%;max-height:55vh}.gdf-stage canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}#gdf-analysis{background:#17314a;padding:12px;border-radius:8px;margin-top:10px}#gdf-start,#gdf-stop{background:#d3ad5c;border-radius:8px}#gdf-stop:disabled,#gdf-start:disabled{opacity:.5}
+</style><style>body{font:16px system-ui;background:#081625;color:white;margin:16px}video{width:100%;max-height:45vh;background:black}button,input{padding:12px;margin:5px;font:inherit}button{background:#d3ad5c;border:0;border-radius:7px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#17314a;padding:12px;font-size:12px}</style><h2>GDF Video Intelligence · Detección Beta V6</h2><p>Diagnóstico de audio en iPhone. No modifica la IA.</p><input type="file" id="file" accept="video/*"><div class="gdf-stage"><video id="v" playsinline controls preload="metadata"></video><canvas id="gdf-overlay" aria-hidden="true"></canvas></div><p><button id="muted">Reproducir silenciado</button><button id="audible">Reproducir con audio desde el inicio</button><button id="enable">Activar sonido sin cambiar Play</button><button id="mute">Silenciar</button><button id="pause">Pausa</button></p><section id="gdf-analysis" aria-label="Análisis de video experimental"><strong>GDF · Detección automática + análisis IA (beta)</strong><p>Una sola fuente de video. Recuadros para personas y posibles balones. No identifica equipos ni garantiza detección de balones pequeños.</p><button id="gdf-start" type="button">Iniciar detección y análisis IA</button><button id="gdf-stop" type="button" disabled>Detener análisis</button><p id="gdf-ai-status" role="status">IA detenida. El video y sus controles funcionan independientemente.</p><p id="gdf-counts">Personas: — · Posibles balones: —</p></section><p id="status">Selecciona un video</p><button id="copy">Copiar registro</button><pre id="log"></pre><script>const v=document.querySelector('#v'),f=document.querySelector('#file'),s=document.querySelector('#status'),box=document.querySelector('#log');let url,last=0;function log(x){const m=new Date().toLocaleTimeString()+' '+x;s.textContent=m;box.textContent=(m+'\n'+box.textContent).slice(0,12000)}f.onchange=()=>{if(!f.files[0])return;v.pause();if(url)URL.revokeObjectURL(url);url=URL.createObjectURL(f.files[0]);v.src=url;v.muted=true;v.load();log('Archivo cargado '+f.files[0].name)};async function play(muted){v.muted=muted;try{await v.play();log('play aceptado muted='+muted)}catch(e){log('play rechazado '+e.name+' '+e.message)}}document.querySelector('#muted').onclick=()=>play(true);document.querySelector('#audible').onclick=()=>play(false);document.querySelector('#enable').onclick=()=>{v.muted=false;log('audio activado sin play()')};document.querySelector('#mute').onclick=()=>{v.muted=true;log('silenciado sin play()')};document.querySelector('#pause').onclick=()=>v.pause();document.querySelector('#copy').onclick=async()=>{try{await navigator.clipboard.writeText(box.textContent);log('registro copiado')}catch(e){log('no se pudo copiar: '+e.message)}};for(const e of ['play','playing','pause','waiting','stalled','canplay','error','volumechange','loadedmetadata','suspend','emptied','abort'])v.addEventListener(e,()=>log(e+' t='+v.currentTime.toFixed(2)+' muted='+v.muted+' paused='+v.paused+' ready='+v.readyState+(v.error?' error='+v.error.code:'')));setInterval(()=>{if(!v.paused&&v.readyState>0){if(v.currentTime===last)log('alerta: tiempo no avanza');last=v.currentTime}},2500);</script><script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<script>
+(function(){
+const video=document.getElementById('v'),canvas=document.getElementById('gdf-overlay'),ctx=canvas.getContext('2d'),start=document.getElementById('gdf-start'),stop=document.getElementById('gdf-stop'),status=document.getElementById('gdf-ai-status'),counts=document.getElementById('gdf-counts'),file=document.getElementById('file');
+let model=null,active=false,generation=0,busy=false,lastFrame=0,raf=0;
+function message(t){status.textContent=t}
+function clear(){ctx.clearRect(0,0,canvas.width,canvas.height)}
+function stopAnalysis(t){active=false;generation++;cancelAnimationFrame(raf);stop.disabled=true;start.disabled=false;clear();if(t)message(t)}
+function resize(){if(!video.videoWidth)return;const w=video.videoWidth,h=video.videoHeight;if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h}}
+file.addEventListener('change',()=>{stopAnalysis('Video cambiado; IA detenida.');counts.textContent='Personas: — · Posibles balones: —'});
+video.addEventListener('ended',()=>stopAnalysis('Video finalizado.'));
+video.addEventListener('error',()=>stopAnalysis('Error de video; IA detenida.'));
+stop.addEventListener('click',()=>stopAnalysis('Análisis detenido. El reproductor permanece disponible.'));
+start.addEventListener('click',async()=>{
+ if(active)return;
+ if(!video.videoWidth){message('Primero selecciona un video y espera a que cargue.');return}
+ if(!window.tf||!window.cocoSsd){message('No se pudieron cargar las bibliotecas IA. Revisa internet.');return}
+ active=true;const id=++generation;start.disabled=true;stop.disabled=false;message('Cargando modelo IA en este dispositivo…');
+ try{
+  if(!model)model=await cocoSsd.load({base:'lite_mobilenet_v2'});
+  if(!active||id!==generation)return;
+  message('IA activa. Reproduce el video con los controles normales; el análisis continúa al desplazarte.');
+  lastFrame=0;
+  const loop=async(time)=>{
+   if(!active||id!==generation)return;
+   raf=requestAnimationFrame(loop);
+   if(busy||video.paused||video.ended||video.readyState<2||time-lastFrame<500)return;
+   lastFrame=time;busy=true;
+   try{
+    const results=await model.detect(video,20,0.3);
+    if(!active||id!==generation)return;
+    resize();clear();let people=0,balls=0;
+    for(const p of results){
+     if(p.class!=='person'&&p.class!=='sports ball')continue;
+     if(p.class==='person')people++;else balls++;
+     const [x,y,w,h]=p.bbox;
+     ctx.strokeStyle=p.class==='person'?'#37E5B0':'#FFD65E';
+     ctx.lineWidth=Math.max(2,canvas.width/360);
+     ctx.strokeRect(x,y,w,h);
+     ctx.fillStyle=ctx.strokeStyle;ctx.font=Math.max(13,canvas.width/60)+'px sans-serif';
+     ctx.fillText((p.class==='person'?'Persona':'Posible balón')+' '+Math.round(p.score*100)+'%',x,Math.max(15,y-5));
+    }
+    counts.textContent='Personas: '+people+' · Posibles balones: '+balls;
+   }catch(err){stopAnalysis('Error de inferencia: '+err.message)}
+   finally{busy=false}
+  };
+  raf=requestAnimationFrame(loop);
+ }catch(err){stopAnalysis('No se pudo cargar IA: '+err.message)}
+});
+})();
+</script></html>
